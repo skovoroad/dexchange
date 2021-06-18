@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <sstream>
+
 #include <boost/fiber/all.hpp>
 
 namespace core {
@@ -26,11 +28,18 @@ namespace project {
   struct dialog_impl : public core::dialog {
     core::messenger & messenger_;
     size_t id_ = 0;
-
+    size_t received_ = 0;
     dialog_impl(core::messenger& m, size_t i) : messenger_(m), id_(i) {}
 
     void handle (core::session_event e ) {
       std::cout << std::this_thread::get_id() <<  " dialog " << id_ << " received " << e.text << std::endl;
+
+      if(!(++received_ % 10)) {
+        std::stringstream ostr;
+        size_t receiver = id_ / 2;
+        ostr << "send " << received_ << " from " << id_ << " to " << receiver;
+        messenger_.send(receiver, core::session_event{ ostr.str()} ); 
+      }
     }
 
     size_t id() { return id_; }
