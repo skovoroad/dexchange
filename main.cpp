@@ -35,11 +35,18 @@ namespace project {
 
     void handle (core::session_event e ) {
       std::cout << std::this_thread::get_id() <<  " dialog " << id_ << " received " << e.text << std::endl;
-      if(e.need_response) {
-        std::stringstream ostr;
-        ostr << "response to \"" << e.text << "\" from " << id_ << " to " << e.response_to;
-        messenger_.send(e.response_to, core::session_event{ ostr.str()} ); 
-      }
+      if(e.need_response) 
+        send_response(e);
+      send_request();
+    }
+
+    void send_response(core::session_event& e) {
+      std::stringstream ostr;
+      ostr << "response to \"" << e.text << "\" from " << id_ << " to " << e.response_to;
+      messenger_.send(e.response_to, core::session_event{ ostr.str()} ); 
+    }
+
+    void send_request() {
       if(!(++received_ % 10)) {
         std::stringstream ostr;
         size_t receiver =  id_ / 2;
