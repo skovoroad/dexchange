@@ -1,8 +1,3 @@
-//          Copyright Oliver Kowalke 2013.
-// Distributed under the Boost Software License, Version 1.0.
-//    (See accompanying file LICENSE_1_0.txt or copy at
-//          http://www.boost.org/LICENSE_1_0.txt)
-
 #include <cstdlib>
 #include <iostream>
 #include <stdexcept>
@@ -16,8 +11,13 @@ namespace core {
     std::string text;
   };
 
+  struct messenger {
+
+  };
+
   struct dialog {
-      virtual void handle (session_event ) = 0; 
+      virtual void handle (session_event ) = 0;
+      virtual size_t id()  = 0;
   };
 }
 
@@ -31,6 +31,8 @@ namespace project {
       void handle (core::session_event e ) {
 	std::cout << std::this_thread::get_id() <<  " dialog " << id_ << " received " << e.text << std::endl;
       }
+
+      size_t id() { return id_; }
     };
 
   core::dialog * create_dialog(size_t i) {
@@ -45,7 +47,8 @@ namespace core {
     boost::fibers::buffered_channel< session_event > channel_;
     session_event current_;
     boost::fibers::fiber fiber_;
-
+    std::atomic<bool> stop_ = false;
+ 
     dialog_executor( dialog *d, size_t queue_size)
       : dialog_(d),
         channel_ (queue_size),
@@ -53,13 +56,18 @@ namespace core {
     {}
 
     ~dialog_executor() {
-       fiber_.join();
+       if(fiber_.joinable())
+         fiber_.join();
     }
 
     void read_loop() {
-      while ( boost::fibers::channel_op_status::success == channel_.pop(current_) ) {
+      using namespace std::chrono_literals;
+      while ( boost::fibers::channel_op_status::success == channel_.pop_wait_for(current_, 1s) ) {
+        if(stop_)
+          break;
 	dialog_->handle(current_);
       }
+      std::cout << "dialog " << dialog_->id() << " stopped" << std::endl;
     }
   };
 
@@ -76,6 +84,8 @@ void thread(/* boost::fibers::detail::thread_barrier * b*/ ) {
     boost::fibers::use_scheduling_algorithm< boost::fibers::algo::shared_work >();
     std::unique_lock<std::mutex> lk( mtx);
     cond.wait( lk, []() { return finished;} );
+    std::cout << "thread  stopped" << std::endl;
+ 
 }
 
 int main() {
@@ -99,7 +109,7 @@ int main() {
 	   queue_size
 	});
 	dialogs.push_back(d);
-        d->fiber_.detach();
+        //d->fiber_.detach();
     }
 
     for(size_t i = 0; i < messages_count; ++i) {
@@ -109,9 +119,16 @@ int main() {
     }
     using namespace std::chrono_literals;
     std::this_thread::sleep_for(1s);
-    std::unique_lock<std::mutex> lk( mtx);
-    finished = true;
-
+    {
+      std::unique_lock<std::mutex> lk( mtx);
+      finished = true;
+      cond.notify_all();
+    }
+    for(size_t i = 0; i < dialog_count; ++i) {
+      dialogs[i]->stop_ = true;
+    }
+    std::this_thread::sleep_for(1s);
+ 
     for ( std::thread & t : threads) { /*< wait for threads to terminate >*/
         t.join();
     }
