@@ -5,12 +5,7 @@
 #include <thread>
 #include <sstream>
 
-//#include <syncstream>
-
 #include <boost/fiber/all.hpp>
-
-//std::basic_osyncstream<char> std::cout(std::cout);
-//using std::cout = std::cout;
 
 namespace core {
 
@@ -90,7 +85,6 @@ namespace core {
           break;
         dialog_->handle(current_);
       }
-//      std::cout << "dialog " << dialog_->id() << " stopped" << std::endl;
     }
   };
 
@@ -156,8 +150,6 @@ namespace core {
           dialogs[dialog_index]->channel_.push(event);
         }
 
-        using namespace std::chrono_literals;
-//        std::this_thread::sleep_for(2s);
         for(size_t i = 0; i < dialog_count; ++i) {
           dialogs[i]->stop_ = true;
         }
