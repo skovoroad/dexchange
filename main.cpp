@@ -12,7 +12,7 @@ namespace core {
   };
 
   struct messenger {
-
+    virtual void send(size_t dialog_id, session_event event)  = 0;
   };
 
   struct dialog {
@@ -24,9 +24,10 @@ namespace core {
 namespace project {
 
   struct dialog_impl : public core::dialog {
+      core::messenger & messenger_;
       size_t id_ = 0;
-
-      dialog_impl(size_t i) : id_(i) {}
+ 
+      dialog_impl(core::messenger& m, size_t i) : messenger_(m), id_(i) {}
 
       void handle (core::session_event e ) {
 	std::cout << std::this_thread::get_id() <<  " dialog " << id_ << " received " << e.text << std::endl;
@@ -35,8 +36,8 @@ namespace project {
       size_t id() { return id_; }
     };
 
-  core::dialog * create_dialog(size_t i) {
-    return new dialog_impl(i);
+  core::dialog * create_dialog(core::messenger &m, size_t i) {
+    return new dialog_impl(m, i);
   };
 }
 
@@ -71,72 +72,86 @@ namespace core {
     }
   };
 
-}
+  struct fiber_threads {
+     bool finished = false;
+     std::mutex mtx{};
+     boost::fibers::condition_variable_any cond{};
 
-static bool finished = false;
-static std::mutex mtx{};
-static boost::fibers::condition_variable_any cond{};
+     std::vector<std::thread> threads_;
 
-void thread(/* boost::fibers::detail::thread_barrier * b*/ ) {
-/*    std::ostringstream buffer;
-    buffer << "thread started " << std::this_thread::get_id() << std::endl;
-    std::cout << buffer.str() << std::flush;*/
-    boost::fibers::use_scheduling_algorithm< boost::fibers::algo::shared_work >();
-    std::unique_lock<std::mutex> lk( mtx);
-    cond.wait( lk, []() { return finished;} );
-    std::cout << "thread  stopped" << std::endl;
- 
-}
+     void run(size_t threads_count) {
+       boost::fibers::use_scheduling_algorithm< boost::fibers::algo::shared_work >();
+       while(threads_count --)
+	 threads_.emplace_back (
+	   [&]() {
+	      boost::fibers::use_scheduling_algorithm< boost::fibers::algo::shared_work >();
+	      std::unique_lock<std::mutex> lk( mtx);
+	      cond.wait( lk, [&]() { return finished;} );
+	   }
+	 );
+     } 
 
-int main() {
-  try {
+     void stop() {
+       {
+	 std::unique_lock<std::mutex> lk( mtx);
+	 finished = true;
+	 cond.notify_all();
+       }
+       for ( std::thread & t : threads_) { 
+	 t.join();
+       }
+     } 
+  };
+
+  struct engine : public messenger {
     const size_t dialog_count = 1000;
     const size_t queue_size = 2;
     const size_t messages_count = 100000;
-
-    boost::fibers::use_scheduling_algorithm< boost::fibers::algo::shared_work >(); 
-//    boost::fibers::detail::thread_barrier b( 4);
-    std::thread threads[] = {
-        std::thread( thread ),
-        std::thread( thread),
-        std::thread( thread)
-    };
-    std::vector <std::shared_ptr<core::dialog_executor>> dialogs;
-
-    for(size_t i = 0; i < dialog_count; ++i) {
-	std::shared_ptr<core::dialog_executor> d(new core::dialog_executor {
-	   project::create_dialog(i),
-	   queue_size
-	});
-	dialogs.push_back(d);
-        //d->fiber_.detach();
-    }
-
-    for(size_t i = 0; i < messages_count; ++i) {
-      size_t dialog_index = i % dialog_count;
-      core::session_event event{ std::to_string(i) };
-      dialogs[dialog_index]->channel_.push(event);
-    }
-    using namespace std::chrono_literals;
-    std::this_thread::sleep_for(1s);
-    {
-      std::unique_lock<std::mutex> lk( mtx);
-      finished = true;
-      cond.notify_all();
-    }
-    for(size_t i = 0; i < dialog_count; ++i) {
-      dialogs[i]->stop_ = true;
-    }
-    std::this_thread::sleep_for(1s);
+    const size_t threads_count = 3;
+    fiber_threads ft;
  
-    for ( std::thread & t : threads) { /*< wait for threads to terminate >*/
-        t.join();
+    void send(size_t dialog_id, session_event event) {
+
     }
-  }
-  catch(std::exception& e) {
-    std::cerr << "caught: " << e.what() << std::endl;
-  }
-  
+
+    void run() {
+      try {
+	ft.run(threads_count);
+
+	std::vector <std::shared_ptr<core::dialog_executor>> dialogs;
+	for(size_t i = 0; i < dialog_count; ++i) {
+	    std::shared_ptr<core::dialog_executor> d(new core::dialog_executor {
+	       project::create_dialog(*this, i),
+	       queue_size
+	    });
+	    dialogs.push_back(d);
+	}
+
+	for(size_t i = 0; i < messages_count; ++i) {
+	  size_t dialog_index = i % dialog_count;
+	  core::session_event event{ std::to_string(i) };
+	  dialogs[dialog_index]->channel_.push(event);
+	}
+
+	using namespace std::chrono_literals;
+	std::this_thread::sleep_for(1s);
+	for(size_t i = 0; i < dialog_count; ++i) {
+	  dialogs[i]->stop_ = true;
+	}
+	ft.stop();
+      }
+      catch(std::exception& e) {
+	std::cerr << "caught: " << e.what() << std::endl;
+      }
+    }
+  };
+}
+
+
+
+int main() {
+  core::engine engine;
+  engine.run(); 
   return 0;
 } 
 
