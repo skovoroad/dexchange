@@ -5,12 +5,19 @@
 #include <thread>
 #include <sstream>
 
+//#include <syncstream>
+
 #include <boost/fiber/all.hpp>
+
+//std::basic_osyncstream<char> std::cout(std::cout);
+//using std::cout = std::cout;
 
 namespace core {
 
   struct session_event {
     std::string text;
+    bool need_response = false;
+    size_t response_to = 0;
   };
 
   struct messenger {
@@ -33,12 +40,18 @@ namespace project {
 
     void handle (core::session_event e ) {
       std::cout << std::this_thread::get_id() <<  " dialog " << id_ << " received " << e.text << std::endl;
-
+      if(e.need_response) {
+        std::stringstream ostr;
+        ostr << "response to \"" << e.text << "\" from " << id_ << " to " << e.response_to;
+        messenger_.send(e.response_to, core::session_event{ ostr.str()} ); 
+      }
       if(!(++received_ % 10)) {
         std::stringstream ostr;
-        size_t receiver = id_ / 2;
+        size_t receiver =  id_ / 2;
+        if(receiver == id_)
+          receiver++;
         ostr << "send " << received_ << " from " << id_ << " to " << receiver;
-        messenger_.send(receiver, core::session_event{ ostr.str()} ); 
+        messenger_.send(receiver, core::session_event{ ostr.str(), true, id_} ); 
       }
     }
 
@@ -77,7 +90,7 @@ namespace core {
           break;
         dialog_->handle(current_);
       }
-      std::cout << "dialog " << dialog_->id() << " stopped" << std::endl;
+//      std::cout << "dialog " << dialog_->id() << " stopped" << std::endl;
     }
   };
 
@@ -116,20 +129,20 @@ namespace core {
   struct engine : public messenger {
     const size_t dialog_count = 1000;
     const size_t queue_size = 2;
-    const size_t messages_count = 100000;
+    const size_t messages_count = 1000000000;
     const size_t threads_count = 3;
     fiber_threads ft;
     std::vector <std::shared_ptr<core::dialog_executor>> dialogs;
  
     void send(size_t dialog_id, session_event event) {
-      dialogs[dialog_id]->channel_.push(event);
+      dialogs[dialog_id]->channel_.try_push(event);
     }
 
     void run() {
       try {
         ft.run(threads_count);
 
-       for(size_t i = 0; i < dialog_count; ++i) {
+        for(size_t i = 0; i < dialog_count; ++i) {
           std::shared_ptr<core::dialog_executor> d(new core::dialog_executor {
              project::create_dialog(*this, i),
              queue_size
@@ -144,7 +157,7 @@ namespace core {
         }
 
         using namespace std::chrono_literals;
-        std::this_thread::sleep_for(1s);
+//        std::this_thread::sleep_for(2s);
         for(size_t i = 0; i < dialog_count; ++i) {
           dialogs[i]->stop_ = true;
         }
