@@ -17,7 +17,8 @@ namespace core {
   };
 
   struct messenger {
-    virtual void send(size_t dialog_id, session_event event)  = 0;
+    virtual void send(size_t dialog_id_to, session_event event)  = 0;
+    virtual void request(size_t dialog_id_from, size_t dialog_id_to, session_event event)  = 0;
   };
 
   struct dialog {
@@ -117,6 +118,14 @@ namespace core {
         dialog_->handle(current_);
       }
     }
+
+    void send(session_event event) {
+      channel_.try_push(event);
+    }
+
+    void request(size_t dialog_id_from, session_event event) {
+      channel_.try_push(event);
+    }
   };
 
   struct fiber_threads {
@@ -159,10 +168,14 @@ namespace core {
     fiber_threads ft;
     std::vector <std::shared_ptr<core::dialog_executor>> dialogs;
  
-    void send(size_t dialog_id, session_event event) {
-      dialogs[dialog_id]->channel_.try_push(event);
+    void send(size_t dialog_id_to, session_event event) {
+      dialogs[dialog_id_to]->send(event);
     }
 
+    void request(size_t dialog_id_from, size_t dialog_id_to, session_event event) {
+      dialogs[dialog_id_to]->request(dialog_id_from, event);
+    }
+ 
     void run() {
       try {
         if(threads_count)
