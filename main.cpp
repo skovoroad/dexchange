@@ -11,8 +11,9 @@ namespace core {
 
   struct session_event {
     std::string text;
+
     bool need_response = false;
-    size_t response_to = 0;
+    size_t sender_id = 0;
   };
 
   struct messenger {
@@ -31,30 +32,53 @@ namespace project {
     core::messenger & messenger_;
     size_t id_ = 0;
     size_t received_ = 0;
+    size_t expected_response_from_ = 0;
+
     dialog_impl(core::messenger& m, size_t i) : messenger_(m), id_(i) {}
 
     void handle (core::session_event e ) {
       std::cout << std::this_thread::get_id() <<  " dialog " << id_ << " received " << e.text << std::endl;
+
+      if(expected_response_from_) {
+        if(e.sender_id != expected_response_from_ ) {
+          std::cout << "============ DISORDER " << id_ << " ============  expected response from "
+            << expected_response_from_
+            << " received message from "
+            << e.sender_id << " \"" << e.text << "\""
+            << std::endl;
+          }
+          else { 
+            expected_response_from_ = 0; 
+            std::cout << "============ ORDER " << id_ << " ============  expected response from "
+              << expected_response_from_
+              << " received message from "
+              << e.sender_id << " \"" << e.text << "\""
+              << std::endl;
+          }
+      }
+
       if(e.need_response) 
         send_response(e);
-      send_request();
+      if(!(++received_ % 10))
+        send_request();
     }
 
     void send_response(core::session_event& e) {
       std::stringstream ostr;
-      ostr << "response to \"" << e.text << "\" from " << id_ << " to " << e.response_to;
-      messenger_.send(e.response_to, core::session_event{ ostr.str()} ); 
+      ostr << "response to \"" << e.text << "\" from " << id_ << " to " << e.sender_id;
+      std::cout << ostr.str() << std::endl;
+      messenger_.send(e.sender_id, core::session_event{ ostr.str(), false, id_} ); 
     }
 
     void send_request() {
-      if(!(++received_ % 10)) {
-        std::stringstream ostr;
-        size_t receiver =  id_ / 2;
-        if(receiver == id_)
-          receiver++;
-        ostr << "send " << received_ << " from " << id_ << " to " << receiver;
-        messenger_.send(receiver, core::session_event{ ostr.str(), true, id_} ); 
-      }
+      std::stringstream ostr;
+      size_t receiver =  id_ / 2;
+      if(receiver == id_)
+        return; // just for simplicity
+      ostr << "send request from " << id_ << " to " << receiver;
+      std::cout << ostr.str() << std::endl;
+      expected_response_from_ = receiver;
+      messenger_.send(receiver, core::session_event{ ostr.str(), true, id_} ); 
     }
 
     size_t id() { return id_; }
@@ -131,7 +155,7 @@ namespace core {
     const size_t dialog_count = 1000;
     const size_t queue_size = 2;
     const size_t messages_count = 1000000000;
-    const size_t threads_count = 3;
+    const size_t threads_count = 0;
     fiber_threads ft;
     std::vector <std::shared_ptr<core::dialog_executor>> dialogs;
  
@@ -141,7 +165,8 @@ namespace core {
 
     void run() {
       try {
-        ft.run(threads_count);
+        if(threads_count)
+          ft.run(threads_count);
 
         for(size_t i = 0; i < dialog_count; ++i) {
           std::shared_ptr<core::dialog_executor> d(new core::dialog_executor {
@@ -160,7 +185,8 @@ namespace core {
         for(size_t i = 0; i < dialog_count; ++i) {
           dialogs[i]->stop_ = true;
         }
-        ft.stop();
+        if(threads_count)
+          ft.stop();
       }
       catch(std::exception& e) {
         std::cerr << "caught: " << e.what() << std::endl;
